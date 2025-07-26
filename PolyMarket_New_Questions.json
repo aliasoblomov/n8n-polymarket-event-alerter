@@ -1,0 +1,177 @@
+{
+  "name": "PolyMarket_New_Questions",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "triggerAtMinute": 6
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2980,
+        160
+      ],
+      "id": "718cd6c6-ece6-4435-a46a-9a0ba2991bd2",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "chatId": "-1002860461506",
+        "text": "={{ $json.telegram_message }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1660,
+        140
+      ],
+      "id": "0bd64208-c0f6-4cc1-a1a4-b8736e324b08",
+      "name": "Send Selected Posts",
+      "webhookId": "a2316561-64b1-4750-8fa8-905fa45adaf0",
+      "alwaysOutputData": true,
+      "credentials": {
+        "telegramApi": {
+          "id": "j87beWrTehVzupyS",
+          "name": "PolyMarket Agent"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "=https://gamma-api.polymarket.com/events?ascending=true&active=true&start_date_min={{ $json.start_date_min }}&limit=100\n\n\n",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -2180,
+        400
+      ],
+      "id": "e2154eb1-8bb6-42a3-b22a-1ac8ff358bcc",
+      "name": "Fetch PolyMarket Data1",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node calculates the timestamp for one hour ago.\n\n// Get the current date and time\nconst oneHourAgo = new Date();\n\n// Subtract one hour from the current time\noneHourAgo.setHours(oneHourAgo.getHours() - 30);\n\n// Format the date into the ISO string format required by the API (e.g., \"2025-07-18T12:09:00.000Z\")\nconst timestamp = oneHourAgo.toISOString();\n\n// Return the timestamp so the next node can use it\nreturn [{\n  json: {\n    start_date_min: timestamp\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2760,
+        160
+      ],
+      "id": "e2e1feea-c6b3-40af-9d99-caeb19ae341f",
+      "name": "Create Date Range"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node filters out any posts that contain a 'banned' tag.\n\nconst itemsToKeep = [];\nconst excludedTags = ['Daily', 'Crypto', 'Sports', 'Games', 'Weather' ];\n\nfor (const item of items) {\n  const post = item.json;\n\n  // Assume the post is good unless a bad tag is found\n  let hasExcludedTag = false;\n\n  if (post.tags && Array.isArray(post.tags)) {\n    // Check if ANY of the post's tags are in our excluded list\n    hasExcludedTag = post.tags.some(tag => excludedTags.includes(tag.label));\n  }\n\n  // If no excluded tags were found, keep the item\n  if (!hasExcludedTag) {\n    itemsToKeep.push(item);\n  }\n}\n\n// Return only the filtered items\nreturn itemsToKeep;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -740,
+        520
+      ],
+      "id": "6719db84-fcee-4193-9edf-4912c6329d8d",
+      "name": "Exclude Irrelevant Tags"
+    },
+    {
+      "parameters": {
+        "jsCode": "// This node formats the final Telegram message, handles missing tags, and truncates long messages.\n\nfor (const item of items) {\n  // The full post data is in the 'json' property of each item\n  const post = item.json;\n  const TELEGRAM_LIMIT = 4096;\n  const TRUNCATION_NOTICE = \"\\n\\n_[... and more questions, message truncated due to length]_\";\n\n  // Helper function to format the price change with an emoji and percentage\n  const formatPriceChange = (change) => {\n    if (typeof change !== 'number' || isNaN(change)) {\n      return '*1h Change:* N/A';\n    }\n    const percentage = (change * 100).toFixed(2);\n    if (change > 0) return `📈 *1h Change:* +${percentage}%`;\n    if (change < 0) return `📉 *1h Change:* ${percentage}%`;\n    return `➖ *1h Change:* 0.00%`;\n  };\n\n  // Helper function for a cleaner date format\n  const formatDate = (dateInput) => {\n    if (!dateInput) return 'N/A';\n    const d = new Date(dateInput);\n    const year = d.getUTCFullYear();\n    const month = String(d.getUTCMonth() + 1).padStart(2, '0');\n    const day = String(d.getUTCDate()).padStart(2, '0');\n    const hours = String(d.getUTCHours()).padStart(2, '0');\n    const minutes = String(d.getUTCMinutes()).padStart(2, '0');\n    return `${year}-${month}-${day} ${hours}:${minutes} UTC`;\n  };\n  \n  // **FIX for TAGS:** Safely checks if post.tags exists and is an array before processing.\n  const tags = (post.tags && Array.isArray(post.tags)) \n    ? post.tags.map(tag => `#${tag.label.replace(/[\\s-]/g, '')}`).join(' ') \n    : '';\n\n  // --- Build the message ---\n  \n  let message = `📊 *${post.title.trim()}*\\n`;\n  message += `🔗 [View on Polymarket](https://polymarket.com/market/${post.slug})\\n\\n`;\n\n  if (tags) {\n    message += `*Tags:* ${tags}\\n`;\n  }\n  message += `*Published:* ${formatDate(post.createdAt)}\\n`;\n  message += `\\n------------------------------------\\n`;\n\n  // Loop through each question (market) and add its details\n  let questionsAdded = 0;\n  if (post.markets && Array.isArray(post.markets)) {\n    for (const q of post.markets) {\n      // Safely parse the outcomePrices, which is a string\n      let yesPrice = 'N/A';\n      if (q.outcomePrices && typeof q.outcomePrices === 'string') {\n          try {\n            const outcomePrices = JSON.parse(q.outcomePrices);\n            yesPrice = parseFloat(outcomePrices[0]);\n          } catch(e) {\n            // Keep yesPrice as 'N/A' if JSON is invalid\n          }\n      }\n\n      const questionBlock = `\\n❓ *${q.question.trim()}*\\n`\n        + `   - 💲 *Yes Price:* \\`${yesPrice}\\`\\n`\n        + `   - 🔄 *Last Trade:* \\`${q.lastTradePrice || 'N/A'}\\`\\n`\n        + `   - ${formatPriceChange(q.oneHourPriceChange)}\\n`\n        + `   - 🏁 *End Date:* ${formatDate(q.endDate)}\\n`;\n\n      // **FIX for LENGTH:** Check if adding this block would exceed the limit\n      if (message.length + questionBlock.length + TRUNCATION_NOTICE.length > TELEGRAM_LIMIT) {\n        break; // Stop adding more questions\n      }\n\n      message += questionBlock;\n      questionsAdded++;\n    }\n  }\n\n  // Add a truncation notice if not all questions were included\n  if (post.markets && questionsAdded < post.markets.length) {\n    message += TRUNCATION_NOTICE;\n  }\n  \n  // Add the final formatted message to the item's JSON\n  item.json.telegram_message = message;\n}\n\n// Return the items with the new 'telegram_message' field\nreturn items;"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        380
+      ],
+      "id": "980c5c98-ee03-4762-bc07-dd1357ea2ac5",
+      "name": "Format Telegram Message"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Create Date Range",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch PolyMarket Data1": {
+      "main": [
+        [
+          {
+            "node": "Exclude Irrelevant Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Date Range": {
+      "main": [
+        [
+          {
+            "node": "Fetch PolyMarket Data1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exclude Irrelevant Tags": {
+      "main": [
+        [
+          {
+            "node": "Format Telegram Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Telegram Message": {
+      "main": [
+        [
+          {
+            "node": "Send Selected Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9c6d6558-99f0-4995-b671-59b0804e699a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "e7c5f3b2d268aa385ccb63aca8e2dda38d49968e610e1db92922feef4a50bea2"
+  },
+  "id": "AXpOiDuHeqkGQZHH",
+  "tags": []
+}
